@@ -9,6 +9,7 @@ import AttendeeProfileCard from '@/components/AttendeeProfileCard';
 import StatusBanner from '@/components/StatusBanner';
 import AttendanceMetrics from '@/components/AttendanceMetrics';
 import AttendeeDirectoryDrawer from '@/components/AttendeeDirectoryDrawer';
+import { offlineQueue } from '@/lib/offline-queue';
 import { useAuth } from '@/lib/auth-context';
 import {
   QrCode,
@@ -23,6 +24,8 @@ import {
   Volume2,
   VolumeX,
   Users,
+  WifiOff,
+  RefreshCw,
 } from 'lucide-react';
 
 const QrScanner = dynamic(() => import('@/components/QrScanner'), {
@@ -49,8 +52,16 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
   const [stats, setStats] = useState<AttendanceStats | null>(null);
   const [isDirectoryOpen, setIsDirectoryOpen] = useState(false);
   const [allAttendees, setAllAttendees] = useState<Attendee[]>([]);
+  const [networkStatus, setNetworkStatus] = useState(() => offlineQueue.getStatus());
   const lastScannedRef = useRef<string | null>(null);
   const cooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const unsubQueue = offlineQueue.subscribe((queue, isOnline, isSyncing) => {
+      setNetworkStatus({ isOnline, isSyncing, queueLength: queue.length });
+    });
+    return unsubQueue;
+  }, []);
 
   useEffect(() => {
     const unsubscribe = subscribeToEventStats(event.id, (newStats) => {
@@ -67,7 +78,23 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
   }, [event.id]);
 
   const handleDirectoryCheckIn = async (attendeeId: string) => {
-    await checkInAttendee(event.id, attendeeId);
+    try {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        offlineQueue.enqueue({
+          eventId: event.id,
+          attendeeId,
+          staffEmail: user?.email || undefined,
+        });
+        return;
+      }
+      await checkInAttendee(event.id, attendeeId);
+    } catch {
+      offlineQueue.enqueue({
+        eventId: event.id,
+        attendeeId,
+        staffEmail: user?.email || undefined,
+      });
+    }
   };
 
   const handleSelectAttendeeFromDirectory = (attendee: Attendee) => {
@@ -151,23 +178,54 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
   const handleCheckIn = async () => {
     if (scanState.status !== 'found') return;
     setIsCheckingIn(true);
+    const attendee = scanState.attendee;
+
     try {
-      await checkInAttendee(event.id, scanState.attendee.id);
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        offlineQueue.enqueue({
+          eventId: event.id,
+          attendeeId: attendee.id,
+          attendeeName: attendee.fullName,
+          staffEmail: user?.email || undefined,
+        });
+        feedback.playCheckInSuccess();
+        setScanState({
+          status: 'checked_in',
+          attendee: {
+            ...attendee,
+            checkedIn: true,
+            checkedInAt: new Date() as unknown as null,
+          },
+        });
+        return;
+      }
+
+      await checkInAttendee(event.id, attendee.id);
       feedback.playCheckInSuccess();
       setScanState({
         status: 'checked_in',
         attendee: {
-          ...scanState.attendee,
+          ...attendee,
           checkedIn: true,
           checkedInAt: new Date() as unknown as null,
         },
       });
     } catch (err) {
-      console.error('[ScannerView] Check-in error:', err);
-      feedback.playErrorAlert();
+      console.warn('[ScannerView] Check-in error, falling back to offline queue:', err);
+      offlineQueue.enqueue({
+        eventId: event.id,
+        attendeeId: attendee.id,
+        attendeeName: attendee.fullName,
+        staffEmail: user?.email || undefined,
+      });
+      feedback.playCheckInSuccess();
       setScanState({
-        status: 'error',
-        message: 'Check-in transaction could not be completed.',
+        status: 'checked_in',
+        attendee: {
+          ...attendee,
+          checkedIn: true,
+          checkedInAt: new Date() as unknown as null,
+        },
       });
     } finally {
       setIsCheckingIn(false);
@@ -236,6 +294,41 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
         </div>
 
         <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Offline / Sync Indicator */}
+          {!networkStatus.isOnline && (
+            <span
+              title="Operating offline. Scans are stored locally and will sync when reconnected."
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-xl text-xs font-semibold bg-amber-500/15 border border-amber-500/30 text-amber-300 animate-pulse"
+            >
+              <WifiOff className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Offline</span>
+              {networkStatus.queueLength > 0 && (
+                <span className="bg-amber-500/30 px-1.5 py-0.2 rounded-full text-[10px] font-mono">
+                  {networkStatus.queueLength}
+                </span>
+              )}
+            </span>
+          )}
+
+          {networkStatus.isOnline && networkStatus.isSyncing && (
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-xl text-xs font-semibold bg-indigo-500/15 border border-indigo-500/30 text-indigo-300">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <span className="hidden sm:inline">Syncing…</span>
+            </span>
+          )}
+
+          {networkStatus.isOnline && !networkStatus.isSyncing && networkStatus.queueLength > 0 && (
+            <button
+              onClick={() => offlineQueue.syncQueue()}
+              type="button"
+              title="Click to sync queued offline check-ins"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 active:bg-emerald-500/30 border border-emerald-500/30 text-emerald-300 transition"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Sync ({networkStatus.queueLength})</span>
+            </button>
+          )}
+
           <button
             onClick={() => setIsDirectoryOpen(true)}
             type="button"
