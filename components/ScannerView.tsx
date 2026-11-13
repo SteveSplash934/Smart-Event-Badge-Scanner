@@ -1,9 +1,10 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { getAttendee, checkInAttendee } from '@/lib/attendees';
 import { ScanState, Event } from '@/types/attendee';
+import { feedback } from '@/lib/feedback';
 import AttendeeProfileCard from '@/components/AttendeeProfileCard';
 import StatusBanner from '@/components/StatusBanner';
 import { useAuth } from '@/lib/auth-context';
@@ -17,6 +18,8 @@ import {
   ScanLine,
   Sparkles,
   HelpCircle,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 
 const QrScanner = dynamic(() => import('@/components/QrScanner'), {
@@ -39,8 +42,33 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
   const [scanState, setScanState] = useState<ScanState>({ status: 'scanning' });
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [manualCode, setManualCode] = useState('');
+  const [soundMuted, setSoundMuted] = useState<boolean>(() => feedback.isMuted());
   const lastScannedRef = useRef<string | null>(null);
   const cooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    // Warm up audio context on first user interaction anywhere (required by iOS Safari)
+    const unlock = () => {
+      feedback.initAudio();
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
+
+  const handleToggleSound = () => {
+    const isNowMuted = !soundMuted;
+    feedback.setSoundEnabled(!isNowMuted);
+    setSoundMuted(isNowMuted);
+    if (!isNowMuted) {
+      feedback.playSuccessBeep();
+    }
+  };
 
   const handleScan = useCallback(
     async (rawBadgeId: string) => {
@@ -61,17 +89,21 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
         const attendee = await getAttendee(event.id, badgeId);
 
         if (!attendee) {
+          feedback.playErrorAlert();
           setScanState({ status: 'not_found', badgeId });
           return;
         }
 
         if (attendee.checkedIn) {
+          feedback.playDuplicateWarning();
           setScanState({ status: 'already_checked_in', attendee });
         } else {
+          feedback.playScanSuccess();
           setScanState({ status: 'found', attendee });
         }
       } catch (err) {
         console.error('[ScannerView] Lookup error:', err);
+        feedback.playErrorAlert();
         setScanState({
           status: 'error',
           message: 'Unable to query attendee records. Please check connection.',
@@ -86,6 +118,7 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
     setIsCheckingIn(true);
     try {
       await checkInAttendee(event.id, scanState.attendee.id);
+      feedback.playCheckInSuccess();
       setScanState({
         status: 'checked_in',
         attendee: {
@@ -96,6 +129,7 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
       });
     } catch (err) {
       console.error('[ScannerView] Check-in error:', err);
+      feedback.playErrorAlert();
       setScanState({
         status: 'error',
         message: 'Check-in transaction could not be completed.',
@@ -166,7 +200,21 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <button
+            onClick={handleToggleSound}
+            type="button"
+            title={soundMuted ? 'Unmute Audio & Haptic Feedback' : 'Mute Audio & Haptic Feedback'}
+            aria-label={soundMuted ? 'Unmute audio and haptic feedback' : 'Mute audio and haptic feedback'}
+            className={`w-9 h-9 rounded-xl border flex items-center justify-center transition ${
+              soundMuted
+                ? 'bg-rose-500/10 border-rose-500/25 text-rose-400 hover:bg-rose-500/20 active:bg-rose-500/30'
+                : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400 hover:bg-emerald-500/20 active:bg-emerald-500/30'
+            }`}
+          >
+            {soundMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+          </button>
+
           <button
             onClick={signOut}
             type="button"
