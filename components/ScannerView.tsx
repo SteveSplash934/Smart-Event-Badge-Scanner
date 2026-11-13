@@ -2,11 +2,12 @@
 
 import dynamic from 'next/dynamic';
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { getAttendee, checkInAttendee } from '@/lib/attendees';
-import { ScanState, Event } from '@/types/attendee';
+import { getAttendee, checkInAttendee, subscribeToEventStats } from '@/lib/attendees';
+import { ScanState, Event, AttendanceStats } from '@/types/attendee';
 import { feedback } from '@/lib/feedback';
 import AttendeeProfileCard from '@/components/AttendeeProfileCard';
 import StatusBanner from '@/components/StatusBanner';
+import AttendanceMetrics from '@/components/AttendanceMetrics';
 import { useAuth } from '@/lib/auth-context';
 import {
   QrCode,
@@ -43,8 +44,16 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [manualCode, setManualCode] = useState('');
   const [soundMuted, setSoundMuted] = useState<boolean>(() => feedback.isMuted());
+  const [stats, setStats] = useState<AttendanceStats | null>(null);
   const lastScannedRef = useRef<string | null>(null);
   const cooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToEventStats(event.id, (newStats) => {
+      setStats(newStats);
+    });
+    return unsubscribe;
+  }, [event.id]);
 
   useEffect(() => {
     // Warm up audio context on first user interaction anywhere (required by iOS Safari)
@@ -225,6 +234,9 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
           </button>
         </div>
       </header>
+
+      {/* Real-time Attendance Metrics Bar & Tier Breakdown */}
+      <AttendanceMetrics stats={stats} eventName={event.name} />
 
       {/* Main Scanner Section */}
       <main className="flex-1 flex flex-col items-center justify-center px-4 py-6 sm:py-8 w-full max-w-lg mx-auto">

@@ -8,9 +8,10 @@ import {
   serverTimestamp,
   orderBy,
   Timestamp,
+  onSnapshot,
 } from 'firebase/firestore';
 import { db, auth } from './firebase/client';
-import { Attendee, Event } from '@/types/attendee';
+import { Attendee, Event, AttendanceStats, TicketType, TierStats } from '@/types/attendee';
 import { DEMO_EVENTS, DEMO_ATTENDEES } from './demo-data';
 
 export function isFirebaseConfigured(): boolean {
@@ -39,9 +40,106 @@ function setLocalAttendees(eventId: string, attendees: Attendee[]): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(`${LOCAL_STORAGE_KEY}_${eventId}`, JSON.stringify(attendees));
+    window.dispatchEvent(new CustomEvent('badge_scanner_local_update', { detail: { eventId } }));
   } catch (e) {
     console.warn('Error saving demo attendees to localStorage:', e);
   }
+}
+
+const ALL_TIERS: TicketType[] = ['VIP', 'Speaker', 'Staff', 'General'];
+
+export function computeAttendanceStats(attendees: Attendee[]): AttendanceStats {
+  const total = attendees.length;
+  const checkedIn = attendees.filter((a) => a.checkedIn).length;
+  const percentage = total > 0 ? Math.round((checkedIn / total) * 100) : 0;
+
+  const byTier: Record<TicketType, TierStats> = {
+    VIP: { tier: 'VIP', total: 0, checkedIn: 0, percentage: 0 },
+    Speaker: { tier: 'Speaker', total: 0, checkedIn: 0, percentage: 0 },
+    Staff: { tier: 'Staff', total: 0, checkedIn: 0, percentage: 0 },
+    General: { tier: 'General', total: 0, checkedIn: 0, percentage: 0 },
+  };
+
+  attendees.forEach((a) => {
+    const tier = (a.ticketType in byTier ? a.ticketType : 'General') as TicketType;
+    byTier[tier].total += 1;
+    if (a.checkedIn) {
+      byTier[tier].checkedIn += 1;
+    }
+  });
+
+  ALL_TIERS.forEach((tier) => {
+    const item = byTier[tier];
+    item.percentage = item.total > 0 ? Math.round((item.checkedIn / item.total) * 100) : 0;
+  });
+
+  return { total, checkedIn, percentage, byTier };
+}
+
+export function subscribeToEventStats(
+  eventId: string,
+  callback: (stats: AttendanceStats) => void
+): () => void {
+  if (isFirebaseConfigured() && db) {
+    try {
+      const attendeesCol = collection(db, 'events', eventId, 'attendees');
+      const unsubscribe = onSnapshot(
+        attendeesCol,
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const attendees = snapshot.docs.map(
+              (d) => ({ id: d.id, ...d.data() }) as Attendee
+            );
+            callback(computeAttendanceStats(attendees));
+          } else {
+            const locals = getLocalAttendees(eventId);
+            callback(computeAttendanceStats(locals));
+          }
+        },
+        (error) => {
+          console.warn('[subscribeToEventStats] Firestore snapshot error, using local fallback:', error);
+          const locals = getLocalAttendees(eventId);
+          callback(computeAttendanceStats(locals));
+        }
+      );
+      return unsubscribe;
+    } catch (err) {
+      console.warn('[subscribeToEventStats] Failed to attach Firestore listener:', err);
+    }
+  }
+
+  // Local / Demo Mode fallback
+  const emitLocal = () => {
+    const attendees = getLocalAttendees(eventId);
+    callback(computeAttendanceStats(attendees));
+  };
+
+  emitLocal();
+
+  if (typeof window !== 'undefined') {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === `${LOCAL_STORAGE_KEY}_${eventId}`) {
+        emitLocal();
+      }
+    };
+
+    const handleCustom = (e: unknown) => {
+      const custom = e as CustomEvent<{ eventId: string }>;
+      if (!custom.detail || custom.detail.eventId === eventId) {
+        emitLocal();
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('badge_scanner_local_update', handleCustom as EventListener);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('badge_scanner_local_update', handleCustom as EventListener);
+    };
+  }
+
+  return () => {};
 }
 
 // ─── Events ──────────────────────────────────────────────────────────────────

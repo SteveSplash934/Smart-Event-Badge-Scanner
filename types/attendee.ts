@@ -24,6 +24,20 @@ export interface Event {
   description?: string;
 }
 
+export interface TierStats {
+  tier: TicketType;
+  total: number;
+  checkedIn: number;
+  percentage: number;
+}
+
+export interface AttendanceStats {
+  total: number;
+  checkedIn: number;
+  percentage: number;
+  byTier: Record<TicketType, TierStats>;
+}
+
 export type ScanState =
   | { status: 'idle' }
   | { status: 'scanning' }
