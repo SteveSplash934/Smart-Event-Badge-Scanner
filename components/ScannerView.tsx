@@ -2,12 +2,13 @@
 
 import dynamic from 'next/dynamic';
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { getAttendee, checkInAttendee, subscribeToEventStats } from '@/lib/attendees';
-import { ScanState, Event, AttendanceStats } from '@/types/attendee';
+import { getAttendee, checkInAttendee, subscribeToEventStats, subscribeToAttendees } from '@/lib/attendees';
+import { ScanState, Event, AttendanceStats, Attendee } from '@/types/attendee';
 import { feedback } from '@/lib/feedback';
 import AttendeeProfileCard from '@/components/AttendeeProfileCard';
 import StatusBanner from '@/components/StatusBanner';
 import AttendanceMetrics from '@/components/AttendanceMetrics';
+import AttendeeDirectoryDrawer from '@/components/AttendeeDirectoryDrawer';
 import { useAuth } from '@/lib/auth-context';
 import {
   QrCode,
@@ -21,6 +22,7 @@ import {
   HelpCircle,
   Volume2,
   VolumeX,
+  Users,
 } from 'lucide-react';
 
 const QrScanner = dynamic(() => import('@/components/QrScanner'), {
@@ -45,6 +47,8 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
   const [manualCode, setManualCode] = useState('');
   const [soundMuted, setSoundMuted] = useState<boolean>(() => feedback.isMuted());
   const [stats, setStats] = useState<AttendanceStats | null>(null);
+  const [isDirectoryOpen, setIsDirectoryOpen] = useState(false);
+  const [allAttendees, setAllAttendees] = useState<Attendee[]>([]);
   const lastScannedRef = useRef<string | null>(null);
   const cooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -54,6 +58,28 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
     });
     return unsubscribe;
   }, [event.id]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToAttendees(event.id, (list) => {
+      setAllAttendees(list);
+    });
+    return unsubscribe;
+  }, [event.id]);
+
+  const handleDirectoryCheckIn = async (attendeeId: string) => {
+    await checkInAttendee(event.id, attendeeId);
+  };
+
+  const handleSelectAttendeeFromDirectory = (attendee: Attendee) => {
+    lastScannedRef.current = attendee.id;
+    if (attendee.checkedIn) {
+      feedback.playDuplicateWarning();
+      setScanState({ status: 'already_checked_in', attendee });
+    } else {
+      feedback.playScanSuccess();
+      setScanState({ status: 'found', attendee });
+    }
+  };
 
   useEffect(() => {
     // Warm up audio context on first user interaction anywhere (required by iOS Safari)
@@ -211,6 +237,17 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
 
         <div className="flex items-center gap-1.5 sm:gap-2">
           <button
+            onClick={() => setIsDirectoryOpen(true)}
+            type="button"
+            title="Open Attendee Directory"
+            aria-label="Open Attendee Directory"
+            className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 active:bg-indigo-500/30 border border-indigo-500/25 text-xs text-indigo-300 transition min-h-[36px]"
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline font-medium">Directory</span>
+          </button>
+
+          <button
             onClick={handleToggleSound}
             type="button"
             title={soundMuted ? 'Unmute Audio & Haptic Feedback' : 'Mute Audio & Haptic Feedback'}
@@ -276,6 +313,17 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
             </button>
           </form>
 
+          <div className="mt-2.5 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setIsDirectoryOpen(true)}
+              className="text-xs text-indigo-400 hover:text-indigo-300 active:text-indigo-200 inline-flex items-center gap-1 transition"
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>Lost badge? Search attendee directory &rarr;</span>
+            </button>
+          </div>
+
           {/* Quick-Test Badge Pills */}
           <div className="mt-5 pt-4 border-t border-white/10">
             <div className="flex items-center justify-center gap-1.5 text-slate-400 text-[11px] mb-2.5">
@@ -336,6 +384,16 @@ export default function ScannerView({ event, onChangeEvent }: ScannerViewProps) 
           />
         )}
       </main>
+
+      {/* Attendee Directory Drawer */}
+      <AttendeeDirectoryDrawer
+        isOpen={isDirectoryOpen}
+        onClose={() => setIsDirectoryOpen(false)}
+        attendees={allAttendees}
+        onCheckIn={handleDirectoryCheckIn}
+        onSelectAttendee={handleSelectAttendeeFromDirectory}
+        eventName={event.name}
+      />
     </div>
   );
 }

@@ -163,6 +163,83 @@ export async function getEvents(): Promise<Event[]> {
 
 // ─── Attendees ────────────────────────────────────────────────────────────────
 
+export async function getAllAttendees(eventId: string): Promise<Attendee[]> {
+  if (!isFirebaseConfigured() || !db) {
+    return getLocalAttendees(eventId);
+  }
+  try {
+    const colRef = collection(db, 'events', eventId, 'attendees');
+    const snap = await getDocs(colRef);
+    if (snap.empty) {
+      return getLocalAttendees(eventId);
+    }
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Attendee);
+  } catch (err) {
+    console.warn('[getAllAttendees] Firestore error, falling back to local:', err);
+    return getLocalAttendees(eventId);
+  }
+}
+
+export function subscribeToAttendees(
+  eventId: string,
+  callback: (attendees: Attendee[]) => void
+): () => void {
+  if (isFirebaseConfigured() && db) {
+    try {
+      const attendeesCol = collection(db, 'events', eventId, 'attendees');
+      const unsubscribe = onSnapshot(
+        attendeesCol,
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const list = snapshot.docs.map(
+              (d) => ({ id: d.id, ...d.data() }) as Attendee
+            );
+            callback(list);
+          } else {
+            callback(getLocalAttendees(eventId));
+          }
+        },
+        (error) => {
+          console.warn('[subscribeToAttendees] Snapshot error, falling back:', error);
+          callback(getLocalAttendees(eventId));
+        }
+      );
+      return unsubscribe;
+    } catch (err) {
+      console.warn('[subscribeToAttendees] Error creating snapshot listener:', err);
+    }
+  }
+
+  const emit = () => {
+    callback(getLocalAttendees(eventId));
+  };
+  emit();
+
+  if (typeof window !== 'undefined') {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === `${LOCAL_STORAGE_KEY}_${eventId}`) {
+        emit();
+      }
+    };
+    const handleCustom = (e: unknown) => {
+      const custom = e as CustomEvent<{ eventId: string }>;
+      if (!custom.detail || custom.detail.eventId === eventId) {
+        emit();
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('badge_scanner_local_update', handleCustom as EventListener);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('badge_scanner_local_update', handleCustom as EventListener);
+    };
+  }
+
+  return () => {};
+}
+
 export async function getAttendee(
   eventId: string,
   badgeId: string
