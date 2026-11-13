@@ -1,0 +1,47 @@
+# Node dependencies
+node_modules/
+.next/
+out/
+
+# Environment variables — NEVER commit these
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Firebase Admin service account key (if downloaded as a file)
+service-account*.json
+firebase-adminsdk*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Logs
+*.log
+npm-debug.log*
+
+# TypeScript build info
+*.tsbuildinfo
+
+# SSL Certificates & keys
+certificates/
+*.pem
+*.key
+*.crt
+
+# Internal agent docs & planning notes
+AGENTS.md
+NEXT-TASK.md
+.gemini/
+*.agent*

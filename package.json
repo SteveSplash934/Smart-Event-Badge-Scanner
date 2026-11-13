@@ -1,0 +1,38 @@
+{
+  "name": "smart-event-badge-scanner",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --experimental-https --experimental-https-key ./certificates/localhost-key.pem --experimental-https-cert ./certificates/localhost.pem -H 0.0.0.0 -p 3001",
+    "dev:http": "next dev -H 0.0.0.0 -p 3001",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "type-check": "tsc --noEmit",
+    "seed": "node --experimental-strip-types scripts/seed.ts"
+  },
+  "dependencies": {
+    "@zxing/browser": "^0.2.1",
+    "@zxing/library": "^0.23.0",
+    "firebase": "^11.4.0",
+    "lucide-react": "^0.468.0",
+    "next": "16.4.3",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "dotenv": "^16.4.7",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.3",
+    "firebase-admin": "^13.0.0",
+    "postcss": "^8.5.32",
+    "tailwindcss": "^4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5"
+  }
+}
